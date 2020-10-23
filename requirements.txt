@@ -1,0 +1,5 @@
+fastapi
+aiopyql
+uvloop
+uvicorn
+websockets
