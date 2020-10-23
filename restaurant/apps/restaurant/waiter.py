@@ -67,32 +67,6 @@ class Waiter:
                         work['order_id']
                     )
 
-                # table full
-                if work['event'] == 'ready_for_order':
-                    #customers = await self.restaurant.tables[work['table_id']].get_customers_at_table(sitting=True)
-
-                    meal_check = [work['customers'][c]['meal_choice'] for c in work['customers']]
-                    options = []
-                    if 'both' in meal_check:
-                        options = ['dinner', 'both']
-                    elif 'dinner' in meal_check:
-                        options = ['dinner']
-                    else:
-                        options = ['dessert']
-                    #order = 'dinner' if True in dinner_check else 'dessert'
-                    
-                    for customer in work['customers']:
-                        meal_choice = work['customers'][customer]['meal_choice']
-                        if not meal_choice in options:
-                            continue
-
-                        order_id = 0 if 'dinner' in options else 1
-                        await self.take_order(
-                            customer, 
-                            work['table_id'],
-                            order_id
-                        )
-                    continue
                 if work['event'] == 'waiting_for_order':
                     # send order to cooks
                     await self.order_food(
@@ -100,31 +74,7 @@ class Waiter:
                         work['table_id'],
                         work['order_id']
                     )
-
-                # ready_for_dessert
-                if work['event'] == 'ready_for_dessert':
-                    ready_for_dessert = True
-                    customers = await self.restaurant.tables[work['table_id']].get_customers_at_table(sitting=True)
-
-                    for customer in customers:
-                        if customer['state'] == 3:
-                            self.log.warning(f"{self} cannot order dessert yet - {customer['id']} is still eating")
-                            ready_for_dessert = False
-                            break
-                    if not ready_for_dessert:
-                        # check again later
-                        await self.restaurant.work_for_waiters.put(work)
-                        continue
-                        
-                    # add work to cooks queue
-                    for customer in customers:
-                        if not customer['will_have_dessert']:
-                            continue
-                        await self.order_food(
-                            customer['id'],
-                            work['table_id'],
-                            1
-                        )                 
+                    
                 # waiting_for_bill
                 if work['event'] == 'waiting_for_bill':
                     ready_for_bill = True
@@ -141,16 +91,6 @@ class Waiter:
 
                     for customer in customers:
                         await self.bring_bill(customer['id'], work['table_id'])
-
-                # handle stressed customers
-                if work['event'] in {'stress_raised','high_stress_customer'}:
-                    customer = work['customer']
-
-                    if busy or customer['stress_level'] < 50:
-                        continue
-                    
-                    # mark table un-available if not already - ensure ordering starts ASAP
-                    await self.restaurant.tables['table_id'].set_is_table_available(False)
 
         except Exception as e:
             self.log.exception(f"{self} - exiting - work: {work}")
