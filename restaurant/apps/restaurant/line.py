@@ -36,7 +36,7 @@ class Line:
                 """
                 monitor queue capacity and submit work to hostess queues
                 """
-                await asyncio.sleep(1)
+                await asyncio.sleep(3)
 
                 self.log.warning(f"{self} running - customers: {self.customers_in_line} - hostess work: {self.restaurant.work_for_hostess}")
 
