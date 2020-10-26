@@ -30,7 +30,10 @@ async def run(server):
                 request = await websocket.receive()
                 log.warning(f"received request: {request}")
                 if 'text' in request:
-                    request = json.loads(request['text'])
+                    try:
+                        request = json.loads(request['text'])
+                    except Exception as e:
+                        log.exceptoin(f"unable to load {request} as json")
                 if 'ping' in request:
                     await websocket.send_json({'pong': 'pong'})
                 if 'name' in request:
