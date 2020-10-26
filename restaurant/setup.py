@@ -3,9 +3,9 @@ def run(server):
     import uvloop
     import asyncio
 
-    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+    #asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
     server.event_loop = asyncio.get_event_loop()
-    server.event_loop.set_debug(True)
+    #server.event_loop.set_debug(True)
     try:
         cmddirPath = None
         realPath = None

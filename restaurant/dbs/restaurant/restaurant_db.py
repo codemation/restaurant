@@ -8,7 +8,7 @@ async def run(server):
             for projectPath in projDir:
                 config['database'] = f'{projectPath}dbs/restaurant/restaurant'
                 config['loop'] = server.event_loop
-                config['debug'] = True
+                #config['debug'] = True
         #USE ENV PATH for PYQL library or /pyql/
         sys.path.append('/pyql/' if os.getenv('PYQL_PATH') == None else os.getenv('PYQL_PATH'))
         from aiopyql import data
