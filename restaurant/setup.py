@@ -1,6 +1,7 @@
 def run(server):
     import os
-    import uvloop, asyncio
+    import uvloop
+    import asyncio
 
     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
     server.event_loop = asyncio.get_event_loop()
