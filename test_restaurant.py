@@ -6,10 +6,11 @@ import uuid, random, logging, time
 
 
 class Client:
-    def __init__(self):
-        self.host = '0.0.0.0'
-        self.port = 8390
-        self.game_path = '/testing'
+    def __init__(self, host = None, port = None, game_path = None):
+        self.host = '0.0.0.0' if host is None else host
+        self.port = 8390 if port is None else int(port)
+        self.game_path = '/testing' if game_path is None else game_path
+        # MODE env
 
         #connection 
         self.session_id = str(uuid.uuid1())
@@ -27,6 +28,32 @@ class Client:
         self.dessert_prep_time = 2
         self.customers = {}
         self.tables = {}
+    async def customer_update(self, customer_id, state):
+        if self.customers[customer_id]['state'] == 5:
+            return
+        self.customers[customer_id]['state'] = state
+        update = {
+            "name": "customer_update",
+            "payload": {
+                'id': customer_id,
+                'stress_level': self.customers[customer_id]['stress_level'],
+                'state': state
+            }
+        }
+        if state == 5:
+            will_eat_anything = (
+                self.customers[customer_id]['will_have_dinner']
+                or self.customers[customer_id]['will_have_dessert']
+            )
+            satisfied = True
+            if will_eat_anything:
+                if self.customers[customer_id]['stress_level'] >= 100:
+                    satisfied = False
+            self.customers[customer_id]['satisfied'] = satisfied
+            update['satisfied'] = satisfied
+        await self.events_for_server.put(update)
+
+
     async def customers_eating_at_table(self, table_id):
         for customer in self.tables[table_id]:
             if self.customers[customer]['state'] == 3:
@@ -81,7 +108,6 @@ class Client:
     async def process_received_events(self):
         try:
             while True:
-                print(f"## process_received_events ##: events: {self.events}" )
                 event = await self.events.get()
                 print(event)
                 name = event['name']
@@ -96,17 +122,9 @@ class Client:
                             or self.customers[customer_id]['will_have_dessert']
                         )
                         satisfied = True if not will_eat_anything else False
-                        stress_level = self.customers[customer_id]['stress_level'] if satisfied else 100
-                        await self.events_for_server.put({
-                                "name": "customer_update",
-                                "payload": {
-                                        "id": customer_id,
-                                        "state": 5,
-                                        "stress_level": stress_level,
-                                        "satisfied": satisfied
-                                }
-                            }
-                        )
+                        if not satisfied:
+                            self.customers[customer_id]['stress_level'] = 100
+                        await self.customer_update(customer_id, 5)
                     if name == 'please_sit':
                         self.customers[customer_id]['table'] = data['table_id']
                         if not data['table_id'] in self.tables:
@@ -116,27 +134,9 @@ class Client:
                         line_time = time.time() - self.customers[customer_id]['line_time']
                         stress_range = (0, 5) if line_time < self.dinner_prep_time else (5, 10)
                         self.customers[customer_id]['stress_level'] += random.randint(*stress_range)
-                        await self.events_for_server.put({
-                            "name": "customer_update",
-                            "payload": {
-                                'id': customer_id,
-                                'stress_level': self.customers[customer_id]['stress_level'],
-                                'state': 1
-                            }
-                        }
-                        )
+                        await self.customer_update(customer_id, 1)
                         self.customers[customer_id]['waiting_to_order'] = time.time()
                     if name == 'take_order':
-                        """
-                        {
-                            "name": "take_order",
-                            "payload": {
-                                    "customer_id": customer_id,
-                                    "table_id": 4,
-                                    "order_id": 0
-                            }
-                        }
-                        """
                         order_id = data['order_id']
                         table_id = data['table_id']
 
@@ -148,27 +148,10 @@ class Client:
 
                         waiting_to_order = time.time() - self.customers[customer_id]['waiting_to_order']
                         stress_range = (0, 5) if waiting_to_order < self.dinner_prep_time else (5, 10)
-                        self.customers[customer_id]['stress_level'] += random.randint(*stress_range)         
-                        await self.events_for_server.put({
-                            "name": "customer_update",
-                            "payload": {
-                                'id': customer_id,
-                                'stress_level': self.customers[customer_id]['stress_level'],
-                                'state': 2
-                            }
-                        })
+                        self.customers[customer_id]['stress_level'] += random.randint(*stress_range)
+                        await self.customer_update(customer_id, 2)
                         self.customers[customer_id]['waiting_on_food'] = time.time()
                     if name == 'deliver_order':
-                        """
-                        {
-                            "name": "deliver_order",
-                            "payload": {
-                                    "id": "someid",
-                                    "table_id": 4,
-                                    "order_id": 0
-                            }
-                        }
-                        """
                         order_id = data['order_id']
                         table_id = data['table_id']
                         if order_id == 0:
@@ -181,15 +164,7 @@ class Client:
                         delivery_time = time.time() - self.customers[customer_id]['waiting_on_food']
                         stress_range = (0, 5) if delivery_time < prep_time + 5  else (5, 10)
                         self.customers[customer_id]['stress_level'] += random.randint(*stress_range)
-
-                        await self.events_for_server.put({
-                            "name": "customer_update",
-                            "payload": {
-                                'id': customer_id,
-                                'stress_level': self.customers[customer_id]['stress_level'],
-                                'state': 3
-                            }
-                        })
+                        await self.customer_update(customer_id, 3)
                         async def eat_time(customer_id, dessert=False):
                             try:
                                 meal = 'dinner' if not dessert else 'dessert'
@@ -197,24 +172,10 @@ class Client:
                                 await asyncio.sleep(random.randint(2,5))
                                 if dessert:
                                     # waiting for order
-                                    await self.events_for_server.put({
-                                        "name": "customer_update",
-                                        "payload": {
-                                            'id': customer_id,
-                                            'stress_level': self.customers[customer_id]['stress_level'],
-                                            'state': 2
-                                        }
-                                    })
+                                    await self.customer_update(customer_id, 2)
                                 else:
                                     # waiting bill
-                                    await self.events_for_server.put({
-                                        "name": "customer_update",
-                                        "payload": {
-                                            'id': customer_id,
-                                            'stress_level': self.customers[customer_id]['stress_level'],
-                                            'state': 4
-                                        }
-                                    })
+                                    await self.customer_update(customer_id, 4)
                                     self.customers[customer_id]['waiting_on_bill'] = time.time()
                                 self.log.warning(f"{customer_id} finished eating {meal}")
                             except Exception as e:
@@ -226,15 +187,6 @@ class Client:
                             asyncio.create_task(eat_time(customer_id))
 
                     if name == 'bring_bill':
-                        """
-                        {
-                            "name": "bring_bill",
-                            "payload": {
-                                    "customer_id": "someid",
-                                    "table_id": 4
-                            }
-                        }
-                        """
                         table_id = data['table_id']
                         # game over if bring_bill while eating
                         if await self.customers_eating_at_table(table_id):
@@ -242,17 +194,7 @@ class Client:
                         time_waiting_on_bill = time.time() - self.customers[customer_id]['waiting_on_bill']
                         stress_range = (0, 5) if time_waiting_on_bill > 5 else (5, 10)
                         self.customers[customer_id]['stress_level'] += random.randint(*stress_range)
-                        stress_level = self.customers[customer_id]['stress_level']
-                        satisfied = True if stress_level < 100 else False
-                        await self.events_for_server.put({
-                            "name": "customer_update",
-                            "payload": {
-                                'id': customer_id,
-                                'stress_level': self.customers[customer_id]['stress_level'],
-                                'state': 5,
-                                'satisfied': satisfied
-                            }
-                        })
+                        await self.customer_update(customer_id, 5)
         except Exception as e:
             self.log.exception(f"error in process_received_events")
     async def get_client_ws_session(self):
@@ -269,12 +211,9 @@ class Client:
                     try:
                         while True:
                             result = await ws.receive()
-                            #print(result.type)
-                            print(f"process_received {result}")
                             result = result.json()
                             if 'name' in result:
                                 await self.events.put(result)
-                                print(self.events)
                             await asyncio.sleep(0.05)
                     except Exception as e:
                         self.log.exception(f"client receiver exiting")
@@ -282,6 +221,8 @@ class Client:
                     try:
                         while True:
                             event = await self.events_for_server.get()
+                            if event.get('event') == 'game_over':
+                                break
                             print(f"## process_events_to_server ### sending {event} to game_server")
                             await ws.send_json(event)
                     except Exception as e:
@@ -293,19 +234,6 @@ class Client:
                         while True:
                             if time.time() - last_ping > 10:
                                 await self.events_for_server.put({'ping': 'ping'})
-                                #result = await ws.send_json({'ping': 'ping'})
-                                #self.log.warning(f"ping send: {result}")
-                                #while self.receive_locked:
-                                #    await asyncio.sleep(0.01)
-                                try:
-                                    self.receive_locked = True
-                                    #result = await ws.receive()
-                                    #self.log.warning(f"ping result: {result}")
-                                    self.receive_locked = False
-                                except Exception as e:
-                                    self.receive_locked = False
-                                    raise e
-                                #self.log.warning(f" keep alive receive {result}")
                                 last_ping = time.time()
                             await asyncio.sleep(3)
                     except Exception as e:
@@ -362,59 +290,125 @@ class Client:
                 continue
         raise last_exception
 
-async def new_customer(client, restaurant_id):
-    new_customer_id = str(uuid.uuid1())
-    client.customers[new_customer_id] = {
-                    "id": new_customer_id,
-                    "restaurant_id": restaurant_id,
-                    "state": 0,
-                    "stress_level": random.randint(1, 20),
-                    "sit_together": [],
-                    "will_have_dinner": random.choice([True, False]),
-                    "will_have_dessert": random.choice([True, False])
-    }
-    result = await client.make_client_request(
-        {
-            "name": "customer_update",
-            "payload": client.customers[new_customer_id]
+    async def new_customer(self, restaurant_id, customer_id=None, sit_together=[]):
+        new_customer_id = str(uuid.uuid1()) if customer_id is None else customer_id
+        self.customers[new_customer_id] = {
+            "id": new_customer_id,
+            "restaurant_id": restaurant_id,
+            "state": 0,
+            "stress_level": random.randint(1, 20),
+            "sit_together": sit_together,
+            "will_have_dinner": random.choice([True, False]),
+            "will_have_dessert": random.choice([True, False])
         }
-    )
-    client.customers[new_customer_id]['line_time'] = time.time()
+        result = await self.make_client_request(
+            {
+                "name": "customer_update",
+                "payload": self.customers[new_customer_id]
+            }
+        )
+        self.customers[new_customer_id]['satisfied'] = False
+        self.customers[new_customer_id]['line_time'] = time.time()
+        return new_customer_id
+    async def new_group(self, restaurant_id):
+        """
+        generates a random group of customers of size 2-4 with
+        preferences to sit_together listing each member id
+        """
+        group_ids = [str(uuid.uuid1()) for _ in range(random.randint(2,4))]
 
-async def test_main():
-    c = Client()
+        for i, gid in enumerate(group_ids):
+            sit_together = group_ids[:i] + group_ids[i+1:]
+            await self.new_customer(
+                restaurant_id,
+                gid,
+                sit_together=sit_together
+            )
+
+
+async def test_client(duration, interval=5.0, **kw):
     restaurant_id = str(uuid.uuid1())
+    c = Client(**kw)
     await c.make_client_request(
         {
             "name": "restaurant_update",
             "payload": {
-                    "id": c.session_id,
+                    "id": restaurant_id,
                     "state": 0,
                     "tables": 8,
                     "dinner_prepare_time": c.dinner_prep_time,
                     "dessert_prepare_time": c.dessert_prep_time,
                     "line_number": 20
             }
-        }
+        }   
     )
-    await new_customer(c, c.session_id)
-    await new_customer(c, c.session_id)
-    await new_customer(c, c.session_id)
-    while True:
+    choices = [c.new_customer, c.new_group]
+    start = time.time()
+    while time.time()- start < duration:
         try:
-            await new_customer(c, c.session_id)
-            await asyncio.sleep(0.5)
+            choice = random.choice(choices)
+            if choice == choices[1]:
+                await choice(restaurant_id)
+                await asyncio.sleep(interval)
+            else:
+                await choice(restaurant_id)
+                await asyncio.sleep(interval/2)
         except Exception as e:
             c.log.exception("error in creating new customers")
             print(repr(e))
             break
+    eating = [cid for cid in c.customers if not c.customers[cid]['state'] == 5]
+    while len(eating) > 0:
+        print(f"waiting for {len(eating)} customers to finish meals - {eating}")
+        await asyncio.sleep(2)
+        eating = [cid for cid in c.customers if not c.customers[cid]['state'] == 5]
+        # invoke stress to ensure meal can complete
+        for cid in eating:
+            if not c.customers[cid]['state'] > 2 and c.customers[cid]['stress_level'] < 60:
+                c.customers[cid]['stress_level'] = 60
+                await c.customer_update(cid, c.customers[cid]['state'])
+    await c.make_client_request(
+        {
+            "name": "restaurant_update",
+            "payload": {
+                    "id": restaurant_id,
+                    "state": 1
+            }
+        }   
+    )
+    await c.events_for_server.put({'event': 'game_over'})
+    satisfied = len([cid for cid in c.customers if c.customers[cid]['satisfied']==True])
+    return f"Score: {satisfied} / {len(c.customers)}"
 
 if __name__ == '__main__':
-    asyncio.run(test_main(), debug=True)
+    import sys
+    host, port, game_path = sys.argv[1:]
+    
+    asyncio.run(test_client(60, host=host, port=port, game_path=game_path), debug=True)
+
 
 class TestRestaurant(TestCase):
-    def test__game(self):
-        #loop = asyncio.get_event_loop()
-        #loop.set_debug(enabled=True)
-        #asyncio.run()
-        asyncio.run(test_main(), debug=True)
+    def test_game_level1(self):
+        result = asyncio.run(test_client(10), debug=True)
+        print(f"test_game_level1 result: {result}")
+        time.sleep(5)
+    def test_game_level2(self):
+        result = asyncio.run(test_client(30), debug=True)
+        print(f"test_game_level2 result: {result}")
+        time.sleep(5)
+    def test_game_level3(self):
+        result = asyncio.run(test_client(10, 4), debug=True)
+        print(f"test_game_level3 result: {result}")
+        time.sleep(5)
+    def test_game_level4(self):
+        result = asyncio.run(test_client(30, 4), debug=True)
+        print(f"test_game_level4 result: {result}")
+        time.sleep(5)
+    def test_game_level5(self):
+        result = asyncio.run(test_client(10, 3), debug=True)
+        print(f"test_game_level5 result: {result}")
+        time.sleep(5)
+    def test_game_level4(self):
+        result = asyncio.run(test_client(30, 3), debug=True)
+        print(f"test_game_level6 result: {result}")
+        time.sleep(5)
