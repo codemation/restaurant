@@ -38,6 +38,8 @@ class Kitchen:
             self.log.warning(f"{self} starting")
             while True:
                 work = await self.restaurant.work_for_cooks.get()
+                if work.get('event') == 'game_over':
+                    break
                 self.log.warning(f"{self} received order: {work}")
                 self.restaurant.server.event_loop.create_task(
                     self.cook_and_deliver(work['payload'])
