@@ -1,6 +1,7 @@
 import asyncio
 from asyncio import Queue
 from collections import deque, Counter
+from concurrent.futures._base import CancelledError
 
 from apps.restaurant.kitchen import Kitchen
 from apps.restaurant.line import Line
@@ -103,19 +104,25 @@ class Restaurant:
         # Waiter
         self.waiter = await Waiter.create(self)
     async def cleanup(self):
-        for task in self.tasks:
-            task.cancel()
 
         # will exit waiters
-        await server.work_for_waiters[restaurant_id].put({'event': 'game_over'})
+        await self.work_for_waiters.put({'event': 'game_over'})
 
         # will exit hostess 
-        await server.work_for_hostess[restaurant_id].put({'event': 'game_over'})
+        await self.work_for_hostess.put({'event': 'game_over'})
 
         # will exit kitchen
-        await server.work_for_cooks[restaurant_id].put({'event': 'game_over'})
+        await self.work_for_cooks.put({'event': 'game_over'})
 
-        await self.db_restaurants.delete(where={'id': restaurant_id})
+        await asyncio.sleep(8)
+
+        for task in self.tasks:
+            try:
+                task.cancel()
+            except CancelledError:
+                continue
+
+        await self.db_restaurants.delete(where={'id': self.id})
 
 
     async def get_available_tables(self):
