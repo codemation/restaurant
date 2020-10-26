@@ -13,6 +13,7 @@ class Hostess:
         self.tables = {}
         self.busy = False
         self.line_is_empty = True
+        self.status = 'line_is_empty'
 
         self.db_customers = self.restaurant.db.tables['customers']
 
@@ -46,27 +47,69 @@ class Hostess:
         """
         used by hostess to direct customer to table
         """
-        # update db
-        await self.db_customers.update(
-            table_id=table_id,
-            where={
-                'id': customer_id
-            }
-        )
-
-        # send please_sit 
-        await self.restaurant.events_for_client.put(
-            {
-                "name": "please_sit",
-                "payload": {
-                    "customer_id": customer_id,
-                    "table_id": table_id
+        if customer_id in self.waiting_list['customers']:
+            # update db
+            await self.db_customers.update(
+                table_id=table_id,
+                where={
+                    'id': customer_id
                 }
-            }
-        )
+            )
+
+            # send please_sit 
+            await self.restaurant.events_for_client.put(
+                {
+                    "name": "please_sit",
+                    "payload": {
+                        "customer_id": customer_id,
+                        "table_id": table_id
+                    }
+                }
+            )
+    async def run_capcacity_control(self):
+        """
+        run to reduce capacity by 25 % so restaurant stays open
+        """
+        # remove all customers which will order nothing, and any sit_together customers
+
+        # remove members from end of end of line( waiting the least amount of time ) 
+        # 
+        # - both + members
+        # - dinner + members
+        # - dessert + members
+        # # Then Target Individuals
+        try:
+            capacity = self.restaurant.line.line_number
+            number_to_remove = int(capacity * .25)
+            self.log.warning(f"{self} capacity control started to remove {number_to_remove} customers")
+            queue = self.waiting_list['queue'].copy()
+            for _ in range(number_to_remove):
+                if len(self.waiting_list['none']) > 0:
+                    for customer in self.waiting_list['none']:
+                        await self.remove_customer_from_line(customer)
+                        number_to_remove-=1
+                queue = self.waiting_list['queue'].copy()
+                if number_to_remove == 0:
+                    break
+                try:
+                    customer = queue.pop()
+                    await self.remove_customer_from_line(customer)
+                except IndexError:
+                    break
+
+            self.log.warning(f"{self} capacity control completed")
+        except Exception as e:
+            self.log.warning(f"{self} error during capacity control")
 
     async def remove_customer_from_line(self, customer):
         self.log.warning(f"{self} remove_customer_from_line - customer_id: {customer}")
+        if customer in self.waiting_list['customers']:
+            m_choice = self.waiting_list['customers'][customer]['meal_choice']
+            self.waiting_list[m_choice].discard(customer)
+            del self.waiting_list['customers'][customer]
+        if customer in self.waiting_list['queue']:
+            self.waiting_list['queue'].remove(customer)
+
         await self.restaurant.events_for_client.put(
             {
                 "name": "please_leave",
@@ -75,8 +118,6 @@ class Hostess:
                 }
             }
         )
-        self.waiting_list['none'].discard(customer)
-        del self.waiting_list['customers'][customer]
 
     async def start_service(self):
         try:
@@ -84,6 +125,8 @@ class Hostess:
             while True:
                 work = await self.restaurant.work_for_hostess.get()
                 self.log.warning(f"{self} - work {work}")
+                if work['event'] == 'game_over':
+                    break
                 # events
                 if self.tables:
                     available_tables = await self.restaurant.get_available_tables()
@@ -118,20 +161,22 @@ class Hostess:
                     self.restaurant.waiter.busy = True
 
                     # trigger line control logic
-                    for customer in self.waiting_list['none']:
-                        await self.remove_customer_from_line(customer)
+                    if not self.status == 'line_near_capacity':
+                        await self.run_capcacity_control()
 
                 # line_half_capacity
                 if work['event'] == 'line_half_capacity':
                     self.busy = True
                     self.restaurant.waiter.busy = True
-                    # trigger line control logic
-                    for customer in self.waiting_list['none']:
-                        await self.remove_customer_from_line(customer)
+                    if not self.status == 'line_half_capacity':
+                        self.status = 'line_half_capacity'
+                        await self.run_capcacity_control()
                 # line_partial_capacity
                 if work['event'] == 'line_partial_capacity' or work['event'] == 'line_is_empty':
                     self.busy = False
                     self.restaurant.waiter.busy = False
+                    if not self.status == work['event']:
+                        self.status = work['event']
 
                 unassigned = deque()
                 while True:
@@ -142,6 +187,8 @@ class Hostess:
                     except IndexError:
                         self.waiting_list['queue'] = unassigned
                         break
+                    if not customer_id in self.waiting_list['customers']:
+                        continue
                     pref = self.waiting_list['customers'][customer_id]
                     table_type = None
                     if 'sit_together' in pref and len(pref['sit_together']) > 0:
@@ -153,8 +200,7 @@ class Hostess:
                         seats = len(pref['sit_together']) + 1
                         group_choices = {self.waiting_list['customers'][c]['meal_choice'] for c in pref['sit_together']}
                         group_choices.add(pref['meal_choice'])
-                        if 'none' in group_choices:
-                            pass
+
                         if 'both' in group_choices:
                             table_type = 'both'
                         elif 'dinner' in group_choices:
@@ -165,7 +211,14 @@ class Hostess:
                         else:
                             table_type == 'dessert'
                         
+                        
                         group_ids = [customer_id,  *pref['sit_together']]
+
+                        if 'none' in group_choices or table_type is None:
+                            # refuse service - everyone must order something
+                            for c_id in group_ids:
+                                await self.remove_customer_from_line(c_id)
+                            continue
 
                         for t_type in {table_type, 'open'}:
                             for t_id in self.tables[t_type]:
@@ -186,6 +239,8 @@ class Hostess:
                                     m_choice = self.waiting_list['customers'][c_id]['meal_choice']
                                     self.waiting_list[m_choice].discard(c_id)
                                     del self.waiting_list['customers'][c_id]
+                                    if c_id in self.waiting_list['queue']:
+                                        self.waiting_list['queue'].remove(c_id)
                                 break
                         if not assigned:
                             unassigned.append(customer_id)
@@ -227,5 +282,6 @@ class Hostess:
                         unassigned.append(customer_id)
         except Exception as e:
             self.log.exception(f"{self} exiting")
+        self.log.warning(f"{self} exiting")
 
     
