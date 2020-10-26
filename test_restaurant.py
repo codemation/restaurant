@@ -384,7 +384,8 @@ if __name__ == '__main__':
     import sys
     host, port, game_path = sys.argv[1:]
     
-    asyncio.run(test_client(60, host=host, port=port, game_path=game_path), debug=True)
+    results = asyncio.run(test_client(30, host=host, port=port, game_path=game_path), debug=True)
+    print(f"test_run results: {results}")
 
 
 class TestRestaurant(TestCase):
