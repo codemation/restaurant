@@ -250,12 +250,19 @@ class Table:
                 if self.available and (not available or len(customers_at_table) == 4):
                     await self.set_is_table_available(False)
                     await self.notify_ready_to_order()
-
+                start_meal_early = False
                 for customer in customers_at_table:
                     if not customer['id'] in self.customers:
                         self.customers[customer['id']] = customer
+                    if not self.meal_started and not self.restaurant.hostess.busy and customer['stress_level'] > 50:
+                        start_meal_early = True
+
                     if not self.customers[customer['id']]['state'] == customer['state']:
                         await self.update_customer(customer)
+                    if start_meal_early:
+                        await self.set_is_table_available(False)
+                        await self.notify_ready_to_order()
+
                 self.update_customers(customers_at_table)
         except Exception as e:
             self.log.exception(f"{self} exiting")
