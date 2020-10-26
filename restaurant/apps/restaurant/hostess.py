@@ -1,4 +1,5 @@
 from collections import deque
+import asyncio
 
 class Hostess:
     def __init__(self, restaurant):
@@ -73,11 +74,7 @@ class Hostess:
         # remove all customers which will order nothing, and any sit_together customers
 
         # remove members from end of end of line( waiting the least amount of time ) 
-        # 
-        # - both + members
-        # - dinner + members
-        # - dessert + members
-        # # Then Target Individuals
+
         try:
             capacity = self.restaurant.line.line_number
             number_to_remove = int(capacity * .25)
@@ -123,7 +120,14 @@ class Hostess:
         try:
             await self.organize_tables()
             while True:
-                work = await self.restaurant.work_for_hostess.get()
+                if len(self.waiting_list['customers']) == 0:
+                    work = await self.restaurant.work_for_hostess.get()
+                else:
+                    try:
+                        work = self.restaurant.work_for_hostess.get_nowait()
+                    except asyncio.queues.QueueEmpty:
+                        work = {'event': 'queue_empty'}
+
                 self.log.warning(f"{self} - work {work}")
                 if work['event'] == 'game_over':
                     break
@@ -283,5 +287,3 @@ class Hostess:
         except Exception as e:
             self.log.exception(f"{self} exiting")
         self.log.warning(f"{self} exiting")
-
-    
