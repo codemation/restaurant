@@ -7,7 +7,7 @@ async def run(server):
         log.warning(f"starting customer_update with {data}")
         customers = server.data['restaurant'].tables['customers']
         # new customer
-        if data['state'] == 0:
+        if await customers[data['id']] is None:
             data['sit_together'] = {'sit_together': data['sit_together']}
             await customers.insert(**data)
         else:
